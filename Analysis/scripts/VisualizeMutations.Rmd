@@ -1,0 +1,149 @@
+---
+title: "Processing VCF output from base editing data"
+author: "Angelo Limeta"
+date: "14/4/2020"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float: true
+---
+
+## Load libraries
+```{r}
+library(tidyverse)
+select = dplyr::select
+mutate = dplyr::mutate
+```
+
+## Load Data
+
+Load pre-processed vcf data and metadata
+```{r}
+df_seq <- readRDS(file = "../data/processed_data/christos_new.rds")
+head(df_seq)
+```
+
+## Plot non-normalized data
+
+Let's begin by plotting read depth across the sequence per sample
+```{r}
+df_seq %>%
+  group_by(SAMPLE) %>% 
+  summarise(median_read_depth = median(READ_DEPTH)) %>% 
+  ungroup()
+
+df_seq %>% 
+  ggplot(aes(x=POS,y=READ_DEPTH,group=SAMPLE, color=SAMPLE)) +
+  geom_point() +
+  theme(legend.position = "none")
+```
+
+## Adjust for read depth and end regions
+
+Remove low coverage regions
+```{r}
+df_seq = df_seq %>% 
+  filter(READ_DEPTH > 1000)
+
+df_seq %>% head()
+```
+
+Remove end regions
+```{r}
+df_seq = df_seq %>% 
+  filter(POS > 75) %>% 
+  filter(POS < 210)
+
+df_seq %>% head()
+```
+
+Normalize by sequencing depth
+```{r}
+df_seq = df_seq %>% 
+  group_by(SAMPLE,POS) %>% 
+  mutate(NORM_FREQ = FREQ/(READ_DEPTH),
+         LOG_NORM_FREQ = log2(FREQ/READ_DEPTH)) %>% 
+  ungroup()
+
+df_seq %>% head()
+```
+
+## Plot mutations
+
+Plot SNPs for MAG1 editor (gRNA binding site in Grey)
+```{r}
+df_seq %>% 
+  filter(grepl("MAG1gR",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  group_by(POS,SAMPLE) %>% 
+  mutate(snps_at_pos = sum(FREQ)) %>% 
+  ungroup() %>%
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
+  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  ylim(-20,-6) +
+  scale_color_brewer(type = "qual",palette = "Set1") +
+  theme(legend.position = "none") +
+  ylab("Log2 normalized SNP counts per mapped reads") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7)
+
+df_seq %>% 
+  filter(grepl("WT",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  group_by(POS,SAMPLE) %>% 
+  mutate(snps_at_pos = sum(FREQ)) %>% 
+  ungroup() %>%
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
+  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  geom_point() +
+  facet_wrap(~ CONDITION + TIME,ncol = 3) +
+  theme_bw() +
+  ylim(-20,-6) +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Log2 normalized SNP counts per mapped reads") +
+  xlab("Position on gene")
+```
+
+Plot SNPs for AID editor (gRNA binding site in Grey)
+```{r,fig.height=10,fig.width=6}
+df_seq %>% 
+  filter(grepl("WT",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  group_by(POS,SAMPLE) %>% 
+  mutate(snps_at_pos = sum(FREQ)) %>% 
+  ungroup() %>%
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
+  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  geom_point() +
+  facet_wrap(~ CONDITION + TIME,ncol = 3) +
+  theme_bw() +
+  ylim(-20,-6) +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Log2 normalized SNP counts per mapped reads") +
+  xlab("Position on gene")
+
+df_seq %>% 
+  filter(grepl("AID",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  group_by(POS,SAMPLE) %>% 
+  mutate(snps_at_pos = sum(FREQ)) %>% 
+  ungroup() %>%
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
+  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  geom_point() +
+  facet_wrap(~ CONDITION + TIME,ncol = 3) +
+  theme_bw() +
+  ylim(-20,-6) +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none") +
+  ylab("Log2 normalized SNP counts per mapped reads") +
+  xlab("Position on gene") 
+```
