@@ -14,6 +14,7 @@ output:
 library(tidyverse)
 select = dplyr::select
 mutate = dplyr::mutate
+rename = dplyr::rename
 ```
 
 ## Load Data
@@ -26,6 +27,7 @@ head(df_vcf)
 
 df_meta <- read_delim("../data/meta.txt", 
     "\t", escape_double = FALSE, trim_ws = TRUE)
+head(df_meta)
 ```
 
 ## Process vcf file
@@ -176,7 +178,8 @@ Let's also extract editor and gRNA information
 df_meta = df_meta %>% 
   mutate(GUIDE = str_extract(CONDITION, "gR\\d$"),
          EDITOR = str_extract(CONDITION, "dCas\\w{3}"),
-         REPLICATE = str_extract(CONDITION, "\\d$"))
+         REPLICATE = str_extract(CONDITION, "\\d$")) %>% 
+  mutate(EDITOR = ifelse(is.na(EDITOR),"WT",EDITOR))
 
 head(df_meta)
 ```
@@ -200,7 +203,6 @@ df_full = df_tidy %>%
   select(-c(CHROM))
 head(df_full)
 ```
-
 
 ## Save
 
