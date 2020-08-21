@@ -1,3 +1,9 @@
 
 .DS_Store
 Pipeline/.snakemake/log/2020-03-12T150741.525099.snakemake.log
+*.log
+Christos_new/.snakemake/*
+Christos_old/.snakemake/*
+*.bam
+*.bai
+*.fastq
