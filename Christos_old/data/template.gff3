@@ -1,0 +1,2 @@
+##gff-version 3
+template	fullseq	CDS	1	300	.	+	0	ID=template
