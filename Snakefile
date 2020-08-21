@@ -3,7 +3,7 @@ configfile: "config.yaml"
 import os
 import glob
 
-SAMPLES = "/Users/angelol/Documents/PhD/BE-VCF/data/Christos/raw_reads/*"
+SAMPLES = "~/Documents/PhD/BE-VCF/Christos_new/data/*"
 SAMPLES = sorted([os.path.splitext(val)[0] for val in (glob.glob(SAMPLES))]) #Remove .gz from filename path
 SAMPLES = [os.path.splitext(val)[0] for val in SAMPLES]
 SAMPLES = [os.path.basename(val) for val in SAMPLES]
@@ -15,27 +15,37 @@ SAMPLES = list(set(SAMPLES))
 
 rule all:
     input:
-        "plots/quals.svg"
+        "calls/mpileup.tsv"
 
 rule qual_filter:
     input:
         R1 = config["paths"]["raw_reads"] + "{sample}_R1.fastq",
         R2 = config["paths"]["raw_reads"] + "{sample}_R2.fastq"
     output:
-        R1 = "data/" + "{sample}_R1.fastq",
-        R2 = "data/" + "{sample}_R2.fastq"
+        R1 = "filtered_reads/" + "{sample}_R1.fastq",
+        R2 = "filtered_reads/" + "{sample}_R2.fastq"
+    log:
+        "logs/fastp/{sample}.html"
     shell:
-        "fastp --thread 8 --correction --in1 {input.R1} --in2 {input.R2} --out1 {output.R1} --out2 {output.R2}"
+        "fastp --thread 8 --correction "
+        "--in1 {input.R1} --in2 {input.R2} "
+        "--out1 {output.R1} --out2 {output.R2} "
+        "-h {log}"
 
 rule bwa_map:
     input:
-        template = "data/template.fa",
-        R1 = "data/" + "{sample}_R1.fastq",
-        R2 = "data/" + "{sample}_R2.fastq"
+        template = config["paths"]["template"] + "template.fa",
+        R1 = "filtered_reads/" + "{sample}_R1.fastq",
+        R2 = "filtered_reads/" + "{sample}_R2.fastq"
     output:
         "mapped_reads/{sample}.bam"
+    params:
+        rg=r"@RG\tID:{sample}\tSM:{sample}"
+    log:
+        "logs/bwa_mem/{sample}.log"
     shell:
-        "bwa mem -t 4 {input.template} {input.R1} {input.R2} | samtools view -Sb - > {output}"
+        "(bwa mem -R '{params.rg}' -t 4 {input.template} {input.R1} {input.R2} | "
+        "samtools view -Sb - > {output}) 2> {log}"
 
 rule samtools_sort:
     input:
@@ -54,23 +64,16 @@ rule samtools_index:
     shell:
         "samtools index {input}"
 
-rule bcftools_call:
+rule samtools_mpileup:
     input:
-        fa = "data/template.fa",
+        fa = config["paths"]["template"] + "template.fa",
         bam = expand("sorted_reads/{sample}.bam", sample=SAMPLES),
         bai = expand("sorted_reads/{sample}.bam.bai", sample=SAMPLES)
     output:
-        "calls/all.vcf"
+        "calls/mpileup.tsv"
     shell:
-        "freebayes --min-alternate-count 1 --min-alternate-fraction 0 -f {input.fa} --ploidy 1 {input.bam} > calls/all.vcf"
+        "samtools mpileup --max-depth 0 -O -B -f {input.fa} {input.bam} > {output}" # Setting max-depth to 0 allows INF reads at each genomic position.
 
+#"freebayes --min-alternate-count 1 --min-alternate-fraction 0 -f {input.fa} --ploidy 1 {input.bam} > calls/all.vcf"
 #"freebayes -f {input.fa} --ploidy 1 {input.bam} > all.vcf"
 #"bcftools mpileup --max-depth 200000 -Ou -f {input.fa} {input.bam} | bcftools call --ploidy 1 -p 1 -cv - > {output}"
-
-rule plot_quals:
-    input:
-        "calls/all.vcf"
-    output:
-        "plots/quals.svg"
-    script:
-        "scripts/plot-quals.py"

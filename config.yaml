@@ -1,0 +1,6 @@
+paths:
+  raw_reads: /Users/angelol/Documents/PhD/BE-VCF/Christos_old/data/
+  template: /Users/angelol/Documents/PhD/BE-VCF/Chrisos_old/data/
+# !!! 
+# MAKE SURE PATHS END WITH /
+# !!!
