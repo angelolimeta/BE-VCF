@@ -9,14 +9,20 @@ output:
     toc_float: true
 ---
 
-## Load libraries
+# Load libraries
 ```{r}
 library(tidyverse)
+library(cowplot)
+library(ggpubr)
+library(ggsci)
+library(hrbrthemes)
+library(ggrepel)
+library(ggExtra)
 select = dplyr::select
 mutate = dplyr::mutate
 ```
 
-## Load Data
+# Load Data
 
 Load pre-processed vcf data and metadata
 ```{r}
@@ -31,13 +37,25 @@ Let's begin by plotting read depth across the sequence per sample
 df_seq %>%
   group_by(SAMPLE) %>% 
   summarise(median_read_depth = median(READ_DEPTH)) %>% 
-  ungroup()
+  ungroup() %>% 
+  head()
 
 df_seq %>% 
   ggplot(aes(x=POS,y=READ_DEPTH,group=SAMPLE, color=SAMPLE)) +
   geom_point() +
   theme(legend.position = "none")
 ```
+
+Let's look at the amount of mutations per sample, and compare this to read depth
+```{r}
+df_seq %>%
+  group_by(SAMPLE) %>% 
+  summarise(median_read_depth = median(READ_DEPTH),
+            median_mutation_freq = median(FREQ)) %>% 
+  ungroup()
+```
+
+# Data pre-processing
 
 ## Adjust for read depth and end regions
 
@@ -52,7 +70,7 @@ df_seq %>% head()
 Remove end regions
 ```{r}
 df_seq = df_seq %>% 
-  filter(POS > 75) %>% 
+  filter(POS > 80) %>% 
   filter(POS < 210)
 
 df_seq %>% head()
@@ -69,81 +87,440 @@ df_seq = df_seq %>%
 df_seq %>% head()
 ```
 
-## Plot mutations
-
-Plot SNPs for MAG1 editor (gRNA binding site in Grey)
+Let's calculate the frequency of all alternative alleles at each position
 ```{r}
+df_seq = df_seq %>%
+  group_by(SAMPLE, POS, ) %>%
+  mutate(MUT_FREQ = ifelse(MUT_TYPE == "SNP",
+                           sum(NORM_FREQ[MUT_TYPE == "SNP"]),
+                           NA)) %>%
+  ungroup()
+```
+
+
+Let's now subtract the T0 alternative alleles frequency. Let's define this as the mutation enrichment of a given base.
+```{r}
+df_seq = df_seq %>%
+  group_by(CONDITION, POS) %>%
+  mutate(MUT_ENRICH = ifelse(MUT_TYPE == "SNP",
+                                MUT_FREQ/MUT_FREQ[TIME == "T0"],
+                                MUT_FREQ)) %>%
+  mutate(MUT_ENRICH = ifelse(MUT_ENRICH < 0,
+                               0,
+                               MUT_ENRICH)) %>%
+  ungroup() 
+```
+
+
+
+# Analysis of all mutations
+
+## Plot mutations accross the gene sequence
+
+Configure graphical parameters
+```{r}
+# y-axis limits
+ylim_max = 10
+# PAM
+anno_rect_PAM = annotate("rect", xmin = 138, xmax = 140, ymin = -Inf, ymax = Inf, alpha=1, fill="black")
+# gRNA binding site
+anno_rect_gRNA = annotate("rect", xmin = 127, xmax = 147, ymin = -Inf, ymax = Inf, alpha=0.3, fill="black")
+# +/-50bp editing window
+anno_rect_baseEditWindow = annotate("rect", xmin = 77, xmax = 197, ymin = -Inf, ymax = Inf, alpha=0.1, fill="black")
+
+```
+
+Plot mutation enrichment for MAG editor (gRNA binding site in Grey)
+```{r,fig.height=6,fig.width=6}
+
 df_seq %>% 
   filter(grepl("MAG1gR",CONDITION)) %>% 
   filter(MUT_TYPE == "SNP") %>%
-  group_by(POS,SAMPLE) %>% 
-  mutate(snps_at_pos = sum(FREQ)) %>% 
-  ungroup() %>%
-  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
-  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
   geom_point() +
   facet_wrap(~ TIME + CONDITION,ncol = 3) +
   theme_bw() +
-  ylim(-20,-6) +
   scale_color_brewer(type = "qual",palette = "Set1") +
   theme(legend.position = "none") +
-  ylab("Log2 normalized SNP counts per mapped reads") +
+  ylab("Mutation enrichment") +
   xlab("Position on gene") +
-  theme(aspect.ratio = 0.7)
+  theme(aspect.ratio = 0.7) +
+  ylim(0,ylim_max)
+
+df_seq %>% 
+  filter(grepl("MAG\\d$",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
 
 df_seq %>% 
   filter(grepl("WT",CONDITION)) %>% 
   filter(MUT_TYPE == "SNP") %>%
-  group_by(POS,SAMPLE) %>% 
-  mutate(snps_at_pos = sum(FREQ)) %>% 
-  ungroup() %>%
-  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
-  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
   geom_point() +
-  facet_wrap(~ CONDITION + TIME,ncol = 3) +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
   theme_bw() +
-  ylim(-20,-6) +
   scale_color_brewer(type = "div",palette = "Set1") +
   theme(legend.position = "none",
         aspect.ratio = 0.7) +
-  ylab("Log2 normalized SNP counts per mapped reads") +
-  xlab("Position on gene")
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
 ```
 
-Plot SNPs for AID editor (gRNA binding site in Grey)
-```{r,fig.height=10,fig.width=6}
+Plot mutation enrichment for AID editor (gRNA binding site in Grey)
+```{r,fig.height=6,fig.width=6}
+
 df_seq %>% 
-  filter(grepl("WT",CONDITION)) %>% 
+  filter(grepl("AIDgR",CONDITION)) %>% 
   filter(MUT_TYPE == "SNP") %>%
-  group_by(POS,SAMPLE) %>% 
-  mutate(snps_at_pos = sum(FREQ)) %>% 
-  ungroup() %>%
-  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
-  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
   geom_point() +
-  facet_wrap(~ CONDITION + TIME,ncol = 3) +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
   theme_bw() +
-  ylim(-20,-6) +
+  scale_color_brewer(type = "qual",palette = "Set1") +
+  theme(legend.position = "none") +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) +
+  ylim(0,ylim_max)
+
+df_seq %>% 
+  filter(grepl("AID\\d$",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
   scale_color_brewer(type = "div",palette = "Set1") +
   theme(legend.position = "none",
         aspect.ratio = 0.7) +
-  ylab("Log2 normalized SNP counts per mapped reads") +
-  xlab("Position on gene")
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
 
 df_seq %>% 
-  filter(grepl("AID",CONDITION)) %>% 
+  filter(grepl("WT",CONDITION)) %>% 
   filter(MUT_TYPE == "SNP") %>%
-  group_by(POS,SAMPLE) %>% 
-  mutate(snps_at_pos = sum(FREQ)) %>% 
-  ungroup() %>%
-  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = CONDITION)) +
-  annotate("rect", xmin = 127, xmax = 147, ymin = -20, ymax = -6, alpha=0.3, fill="black") +
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
   geom_point() +
-  facet_wrap(~ CONDITION + TIME,ncol = 3) +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
   theme_bw() +
-  ylim(-20,-6) +
   scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
+```
+
+## Compare mutation enrichment with read_depth
+
+Let's sum up the mutation enrichment across the gene in each sample and plot against the read depth
+```{r}
+df_cum_mut = df_seq %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(TIME != "T0") %>%
+  group_by(SAMPLE) %>% 
+  summarise(CUM_MUT_ENRICH = sum(MUT_ENRICH),
+            MEDIAN_READ_DEPTH = median(READ_DEPTH),
+            EDITOR = EDITOR,
+            TIME = TIME) %>%
+  ungroup() %>% 
+  distinct() %>% 
+  filter(!is.na(CUM_MUT_ENRICH)) %>% 
+  mutate(GRNA = ifelse(grepl("gR",SAMPLE),"Guide","No-guide"))
+head(df_cum_mut)
+```
+
+
+```{r, fig.width= 10, fig.height=6}
+# Color by editor
+p_cum1 = df_cum_mut %>%
+  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = EDITOR)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c(
+    "dCasMAG" = "dodgerblue2",
+    "dCasAID" = "violetred",
+    "WT" = "black"
+  )) +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+        legend.position = "bottom") +
+  labs(size = "Transfer",color = "") +
+  xlab("") +
+  ylab("Cumulative mutation enrichment")
+
+# Color by gRNA
+p_cum2 = df_cum_mut %>%
+  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = GRNA)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c(
+    "Guide" = "cyan4",
+    "No-guide" = "darkorange1"
+  )) +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+        legend.position = "bottom") +
+  labs(size = "Transfer",color = "") +
+  xlab("Median read depth") +
+  ylab("")
+
+# Color by transfer
+p_cum3 = df_cum_mut %>%
+  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = TIME)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c(
+    "T1" = "gray55",
+    "T5" = "black"
+  )) +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+        legend.position = "bottom") +
+  labs(size = "Transfer",color = "") +
+  xlab("") +
+  ylab("")
+
+# Add marginal distributions
+p_cum1 = ggMarginal(p_cum1, type = "boxplot", size = 10,groupColour = TRUE)
+p_cum2 = ggMarginal(p_cum2, type = "boxplot", size = 10,groupColour = TRUE)
+p_cum3 = ggMarginal(p_cum3, type = "boxplot", size = 10,groupColour = TRUE)
+
+ggarrange(p_cum1, p_cum2, p_cum3,
+          ncol = 3)
+```
+
+Hmmm, seems like the presence of the gRNA didn't change much.
+Let's try shrinking our data to only look at the editing window, i.e. the gRNA binding site.
+```{r}
+df_cum_mut = df_seq %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(POS >= 127) %>% 
+  filter(POS <= 147) %>% 
+  filter(TIME != "T0") %>%
+  group_by(SAMPLE) %>% 
+  summarise(CUM_MUT_ENRICH = sum(MUT_ENRICH),
+            MEDIAN_READ_DEPTH = median(READ_DEPTH),
+            EDITOR = EDITOR,
+            TIME = TIME) %>%
+  ungroup() %>% 
+  distinct() %>% 
+  filter(!is.na(CUM_MUT_ENRICH)) %>% 
+  mutate(GRNA = ifelse(grepl("gR",SAMPLE),"Guide","No-guide"))
+head(df_cum_mut)
+```
+
+```{r, fig.width= 10, fig.height=6}
+# Color by editor
+p_cum1 = df_cum_mut %>%
+  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = EDITOR)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c(
+    "dCasMAG" = "dodgerblue2",
+    "dCasAID" = "violetred",
+    "WT" = "black"
+  )) +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+        legend.position = "bottom") +
+  labs(size = "Transfer",color = "") +
+  xlab("") +
+  ylab("Cumulative mutation enrichment")
+
+# Color by gRNA
+p_cum2 = df_cum_mut %>%
+  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = GRNA)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c(
+    "Guide" = "cyan4",
+    "No-guide" = "darkorange1"
+  )) +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+        legend.position = "bottom") +
+  labs(size = "Transfer",color = "") +
+  xlab("Median read depth") +
+  ylab("")
+
+# Color by transfer
+p_cum3 = df_cum_mut %>%
+  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = TIME)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c(
+    "T1" = "gray55",
+    "T5" = "black"
+  )) +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+        legend.position = "bottom") +
+  labs(size = "Transfer",color = "") +
+  xlab("") +
+  ylab("")
+
+# Add marginal distributions
+p_cum1 = ggMarginal(p_cum1, type = "boxplot", size = 10,groupColour = TRUE)
+p_cum2 = ggMarginal(p_cum2, type = "boxplot", size = 10,groupColour = TRUE)
+p_cum3 = ggMarginal(p_cum3, type = "boxplot", size = 10,groupColour = TRUE)
+
+ggarrange(p_cum1, p_cum2, p_cum3,
+          ncol = 3)
+```
+
+# Filter out and analyze C -> T edits
+
+Since the base editor can only act on cytidine, we could try to filter out only these edits from our data
+```{r}
+df_seq_cyt = df_seq %>% 
+  filter(REF == "C")
+head(df_seq_cyt)
+```
+## Plot mutations accross the gene sequence
+
+Configure graphical parameters
+```{r}
+# y-axis limits
+ylim_max = 30
+# PAM
+anno_rect_PAM = annotate("rect", xmin = 138, xmax = 140, ymin = -Inf, ymax = Inf, alpha=1, fill="black")
+# gRNA binding site
+anno_rect_gRNA = annotate("rect", xmin = 127, xmax = 147, ymin = -Inf, ymax = Inf, alpha=0.3, fill="black")
+# +/-50bp editing window
+anno_rect_baseEditWindow = annotate("rect", xmin = 77, xmax = 197, ymin = -Inf, ymax = Inf, alpha=0.1, fill="black")
+
+```
+
+Plot mutation enrichment for MAG editor (gRNA binding site in Grey)
+```{r,fig.height=6,fig.width=6}
+
+df_seq_cyt %>% 
+  filter(grepl("MAG1gR",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  scale_color_brewer(type = "qual",palette = "Set1") +
   theme(legend.position = "none") +
-  ylab("Log2 normalized SNP counts per mapped reads") +
-  xlab("Position on gene") 
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) +
+  ylim(0,ylim_max)
+
+df_seq_cyt %>% 
+  filter(grepl("MAG\\d$",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
+
+df_seq_cyt %>% 
+  filter(grepl("WT",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
+```
+
+Plot mutation enrichment for AID editor (gRNA binding site in Grey)
+```{r,fig.height=6,fig.width=6}
+
+df_seq_cyt %>% 
+  filter(grepl("AIDgR",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  scale_color_brewer(type = "qual",palette = "Set1") +
+  theme(legend.position = "none") +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) +
+  ylim(0,ylim_max)
+
+df_seq_cyt %>% 
+  filter(grepl("AID\\d$",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
+
+df_seq_cyt %>% 
+  filter(grepl("WT",CONDITION)) %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
+  anno_rect_baseEditWindow +
+  anno_rect_gRNA +
+  anno_rect_PAM +
+  geom_point() +
+  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+  theme_bw() +
+  scale_color_brewer(type = "div",palette = "Set1") +
+  theme(legend.position = "none",
+        aspect.ratio = 0.7) +
+  ylab("Mutation enrichment") +
+  xlab("Position on gene") +
+  ylim(0,ylim_max)
 ```
