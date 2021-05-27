@@ -1,0 +1,222 @@
+---
+title: "Processing VCF output from base editing data"
+author: "Angelo Limeta"
+date: "14/4/2020"
+output:
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float: true
+---
+
+## Load libraries
+```{r}
+library(tidyverse)
+select = dplyr::select
+mutate = dplyr::mutate
+rename = dplyr::rename
+```
+
+## Load Data
+
+Load .vcf file and sample metadata
+```{r}
+df_vcf <- read_delim("../data/mpileup_CS_2021_Q30fastp.tsv", 
+    "\t", escape_double = FALSE, trim_ws = TRUE, 
+    skip = 22) %>%
+  rename("CHROM" = "#CHROM")
+
+df_meta <- read_delim("../data/meta_CS_2021.tsv", 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+head(df_meta)
+```
+
+## Process vcf file
+
+The .vcf file contains allele counts for each genomic position across samples. These are denoted as AD in the FORMAT field, and correspond to the last entry in each sample.
+```{r}
+df_vcf$FORMAT[1]
+```
+
+For example, let's take a look at the alleles detected in sample "sorted_reads/P20657_1039_S29.bam" at genomic position 72.
+```{r}
+cat("Reference allele: ")
+df_vcf %>% 
+  filter(POS == 72) %>% 
+  select(REF) %>% 
+  as.character() %>% 
+  cat()
+
+cat("\nAlternative alleles: ")
+df_vcf %>% 
+  filter(POS == 72) %>% 
+  select(ALT) %>% 
+  as.character() %>% 
+  cat()
+
+```
+
+Counts for each allele in this particular sample can be accessed as by filtering out the AD entry:
+```{r}
+allele_counts = df_vcf %>% 
+  filter(POS == 72) %>% 
+  select("sorted_reads/P20657_1039_S29.bam") %>% 
+  as.character() %>%
+  strsplit(split = ":")
+allele_counts = allele_counts[[1]][2] #AD is the second entry
+cat("Allele counts:\n")
+cat(allele_counts)
+```
+__These correspond to:__
+* 99956 count for the "T" allele, i.e. the reference allele
+* 29 counts for the "C" allele
+* 6 counts for the "A" allele
+* 5 counts for the "G" allele
+
+Let's convert the matrix into long format for easier downstream processing
+```{r}
+df_long = df_vcf %>%
+  pivot_longer(-c(CHROM,POS,ID,REF,ALT,QUAL,FILTER,INFO,FORMAT),
+               names_to = "SAMPLE",
+               values_to = "FREQ")
+head(df_long)
+```
+Extract only the AD field and combine all alleles into one column.
+We will symbolize deletion by "D"
+```{r}
+df_long = df_long %>% 
+  mutate(FREQ = gsub(".*:","",FREQ)) %>% 
+  mutate(ALLELES = paste(REF,ALT,sep = ",")) %>% 
+  mutate(ALLELES = gsub("<\\*>","D",ALLELES))
+
+df_long %>% 
+  select(ALLELES,FREQ) %>% 
+  head()
+```
+Let's write a function that converts this so that each allele gets its own row
+```{r}
+tidyAlleles = function(df)
+{
+  # Calculate how many rows are required
+  new_no_rows = 0
+  for (i in 1:nrow(df)) {
+    no_alleles_at_pos = length(strsplit(df$FREQ[i], split = ",")[[1]])
+    new_no_rows = new_no_rows + no_alleles_at_pos
+  }
+  
+  # Initialize empty (long) tibble
+  df_output = df[1, ] %>%
+    add_row(SAMPLE = rep("test", new_no_rows - 1)) %>%
+    mutate(ALLELE = NA,
+           FREQ_ALLELE = NA,
+           ALLELE_TYPE = NA)
+  
+  # Fill tibble with values
+  # Indexing variable for keeping track of the row number in the tidy tibble
+  index = 1
+  for (i in 1:nrow(df)) {
+    # Obtain list of alleles and frequencies for each position in each sample
+    alleles_at_pos = strsplit(df$ALLELES[i], split = ",")[[1]]
+    freq_at_pos = strsplit(df$FREQ[i], split = ",")[[1]]
+    for (j in 1:length(alleles_at_pos)) {
+      # fill rows from the original tibble
+      df_output[index, 1:ncol(df)] = df[i, 1:ncol(df)]
+      # Add allele and frequency
+      df_output$ALLELE[index] = alleles_at_pos[j]
+      df_output$FREQ_ALLELE[index] = freq_at_pos[j]
+      # Add allele type (REF,SNP,INDEL)
+      if (nchar(paste0(alleles_at_pos[1], alleles_at_pos[j])) > 2) {
+        df_output$ALLELE_TYPE[index] = "INDEL"
+      } else if (alleles_at_pos[1] == alleles_at_pos[j]){
+        df_output$ALLELE_TYPE[index] = "REF"
+      } else {
+        df_output$ALLELE_TYPE[index] = "SNP"
+      }
+      index = index + 1
+    }
+  }
+  
+  return(df_output)
+}
+
+# df_temp = tidyAlleles(df_long)
+# Actually, tidyverse has a much faster solution
+df_tidy = separate_rows(df_long,FREQ,ALLELES,sep = ",") %>%
+  rename(ALLELE = ALLELES) %>%
+  relocate(FREQ, .after = last_col()) %>% 
+  relocate(SAMPLE, .before = CHROM) %>%
+  mutate(MUT_TYPE = case_when(
+    (nchar(REF) != nchar(ALLELE)) ~ "INDEL",
+    ((nchar(REF) == nchar(ALLELE)) & (REF == ALLELE)) ~ "REF",
+    ((nchar(REF) == 1 | nchar(ALLELE) == 1) & (REF != ALLELE)) ~ "SNP"
+  )) %>% 
+  mutate(FREQ = as.integer(FREQ),
+         POS = as.integer(POS))
+
+df_tidy %>% 
+  select(SAMPLE, POS,ALLELE,FREQ,MUT_TYPE) %>% 
+  head()
+```
+Let's add read depth information at each position
+```{r}
+df_tidy = df_tidy %>% 
+  group_by(SAMPLE,POS) %>% 
+  mutate(READ_DEPTH = sum(FREQ)) %>% 
+  ungroup()
+```
+
+Let's also write to exact edit type and store as a column.
+```{r}
+df_tidy = 
+  df_tidy %>% 
+  group_by(SAMPLE,POS) %>%
+  mutate(EDIT_TYPE = case_when(
+    (REF == ALLELE) ~ "reference",
+    (REF != ALLELE) ~ paste0(REF,"_to_",ALLELE),
+    (ALLELE == "D") ~ "deletion"
+  )) 
+
+df_tidy %>% 
+  select(SAMPLE,POS,REF,ALLELE,EDIT_TYPE) %>% 
+  filter(EDIT_TYPE == "deletion") %>% 
+  head()
+```
+
+df_tidy
+
+## Process metadata
+
+Let's begin by extracting editor, edit site (on CAN1) and replicate
+```{r}
+df_meta = df_meta %>% 
+  separate(Sample_ID, c("EDITOR","SITE","REPLICATE"),sep = "_",remove = FALSE) %>% 
+  rename("SAMPLE" = "NGI ID")
+
+head(df_meta)
+```
+## Merge data
+
+Let's shorten the SAMPLE ID in order to match the NGI ID in the metadata
+```{r}
+df_tidy = df_tidy %>% 
+  mutate(SAMPLE = gsub(".*/","",SAMPLE)) %>% 
+  mutate(SAMPLE = gsub("_S.*","",SAMPLE))
+
+head(df_tidy)
+```
+Merge both data sets
+```{r}
+df_full = df_tidy %>% 
+  inner_join(df_meta,by = "SAMPLE") %>%
+  rename(VCF_INFO = INFO) %>% 
+  relocate(SAMPLE, .before = CHROM) %>% 
+  select(-c(CHROM,Sample_ID))
+head(df_full)
+```
+
+## Save
+
+```{r}
+saveRDS(df_full, file = "../data/processed_data/christos_2021_Q30fastp.rds")
+```
+

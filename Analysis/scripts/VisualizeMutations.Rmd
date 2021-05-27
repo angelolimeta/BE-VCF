@@ -5,8 +5,10 @@ date: "14/4/2020"
 output:
   html_document:
     df_print: kable
-    toc: true
-    toc_float: true
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
 ---
 
 # Load libraries
@@ -18,6 +20,7 @@ library(ggsci)
 library(hrbrthemes)
 library(ggrepel)
 library(ggExtra)
+library(patchwork)
 select = dplyr::select
 mutate = dplyr::mutate
 ```
@@ -26,7 +29,7 @@ mutate = dplyr::mutate
 
 Load pre-processed vcf data and metadata
 ```{r}
-df_seq <- readRDS(file = "../data/processed_data/christos_new.rds")
+df_seq <- readRDS(file = "../data/processed_data/christos_2021_Q30fastp.rds")
 head(df_seq)
 ```
 
@@ -41,17 +44,30 @@ df_seq %>%
   head()
 
 df_seq %>% 
-  ggplot(aes(x=POS,y=READ_DEPTH,group=SAMPLE, color=SAMPLE)) +
+  ggplot(aes(x=POS,y=READ_DEPTH,group=SAMPLE, color=EDITOR)) +
   geom_point() +
-  theme(legend.position = "none")
+  theme_bw() +
+  ylab("Read depth") +
+  xlab("CAN1 position") +
+  theme(legend.position = "bottom")
+
+#plot 2x only
+df_seq %>% 
+  filter(EDITOR == "2x") %>%
+  ggplot(aes(x=POS,y=READ_DEPTH,group=SAMPLE, color=REPLICATE)) +
+  geom_point() +
+  theme_bw() +
+  ylab("Read depth") +
+  xlab("CAN1 position") +
+  theme(legend.position = "bottom")
 ```
 
 Let's look at the amount of mutations per sample, and compare this to read depth
 ```{r}
 df_seq %>%
   group_by(SAMPLE) %>% 
-  summarise(median_read_depth = median(READ_DEPTH),
-            median_mutation_freq = median(FREQ)) %>% 
+  summarise(median_read_depth = mean(READ_DEPTH),
+            median_mutation_freq = mean(FREQ)) %>% 
   ungroup()
 ```
 
@@ -62,26 +78,25 @@ df_seq %>%
 Remove low coverage regions
 ```{r}
 df_seq = df_seq %>% 
-  filter(READ_DEPTH > 1000)
-
+  filter(READ_DEPTH > 5000)
+  
 df_seq %>% head()
 ```
-
-Remove end regions
+Trim edges of each region
 ```{r}
-df_seq = df_seq %>% 
-  filter(POS > 80) %>% 
-  filter(POS < 210)
-
-df_seq %>% head()
+df_seq =
+  df_seq %>% 
+  filter((POS > 52 & POS < 155) | (POS > 730 & POS < 840) | (POS > 1580 & POS < 1681))
 ```
+
+
 
 Normalize by sequencing depth
 ```{r}
 df_seq = df_seq %>% 
   group_by(SAMPLE,POS) %>% 
-  mutate(NORM_FREQ = FREQ/(READ_DEPTH),
-         LOG_NORM_FREQ = log2(FREQ/READ_DEPTH)) %>% 
+  mutate(NORM_FREQ = (FREQ+1)/(READ_DEPTH),
+         LOG_NORM_FREQ = log2((FREQ+1)/READ_DEPTH)) %>% 
   ungroup()
 
 df_seq %>% head()
@@ -90,437 +105,821 @@ df_seq %>% head()
 Let's calculate the frequency of all alternative alleles at each position
 ```{r}
 df_seq = df_seq %>%
-  group_by(SAMPLE, POS, ) %>%
-  mutate(MUT_FREQ = ifelse(MUT_TYPE == "SNP",
+  group_by(SAMPLE, POS) %>%
+  mutate(TOTAL_MUT_FREQ = ifelse(MUT_TYPE == "SNP",
                            sum(NORM_FREQ[MUT_TYPE == "SNP"]),
                            NA)) %>%
-  ungroup()
+  ungroup() %>% 
+  mutate(LOG_TOTAL_MUT_FREQ = log(TOTAL_MUT_FREQ))
 ```
-
-
-Let's now subtract the T0 alternative alleles frequency. Let's define this as the mutation enrichment of a given base.
-```{r}
-df_seq = df_seq %>%
-  group_by(CONDITION, POS) %>%
-  mutate(MUT_ENRICH = ifelse(MUT_TYPE == "SNP",
-                                MUT_FREQ/MUT_FREQ[TIME == "T0"],
-                                MUT_FREQ)) %>%
-  mutate(MUT_ENRICH = ifelse(MUT_ENRICH < 0,
-                               0,
-                               MUT_ENRICH)) %>%
-  ungroup() 
-```
-
 
 
 # Analysis of all mutations
 
-## Plot mutations accross the gene sequence
-
-Configure graphical parameters
+WT
 ```{r}
-# y-axis limits
-ylim_max = 10
-# PAM
-anno_rect_PAM = annotate("rect", xmin = 138, xmax = 140, ymin = -Inf, ymax = Inf, alpha=1, fill="black")
-# gRNA binding site
-anno_rect_gRNA = annotate("rect", xmin = 127, xmax = 147, ymin = -Inf, ymax = Inf, alpha=0.3, fill="black")
-# +/-50bp editing window
-anno_rect_baseEditWindow = annotate("rect", xmin = 77, xmax = 197, ymin = -Inf, ymax = Inf, alpha=0.1, fill="black")
+df_seq %>% 
+  filter(EDITOR == "WT") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  theme(legend.position = "bottom") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Wild-type",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
 
+df_seq %>% 
+  filter(EDITOR == "AID") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  theme(legend.position = "bottom") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("AID only",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
 ```
 
-Plot mutation enrichment for MAG editor (gRNA binding site in Grey)
-```{r,fig.height=6,fig.width=6}
-
-df_seq %>% 
-  filter(grepl("MAG1gR",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "qual",palette = "Set1") +
-  theme(legend.position = "none") +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  theme(aspect.ratio = 0.7) +
-  ylim(0,ylim_max)
-
-df_seq %>% 
-  filter(grepl("MAG\\d$",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
-
-df_seq %>% 
-  filter(grepl("WT",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
-```
-
-Plot mutation enrichment for AID editor (gRNA binding site in Grey)
-```{r,fig.height=6,fig.width=6}
-
-df_seq %>% 
-  filter(grepl("AIDgR",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "qual",palette = "Set1") +
-  theme(legend.position = "none") +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  theme(aspect.ratio = 0.7) +
-  ylim(0,ylim_max)
-
-df_seq %>% 
-  filter(grepl("AID\\d$",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
-
-df_seq %>% 
-  filter(grepl("WT",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
-```
-
-## Compare mutation enrichment with read_depth
-
-Let's sum up the mutation enrichment across the gene in each sample and plot against the read depth
+Nishida site
 ```{r}
-df_cum_mut = df_seq %>% 
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 767, xmax = 769, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Nishida gRNA",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 767, xmax = 769, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Nishida gRNA",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","C_to_A","G_to_T","G_to_A")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 767, xmax = 769, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Nishida gRNA",subtitle = "G transitions") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+Compare overall mutation frequency across sites
+```{r}
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=SITE,y=LOG_TOTAL_MUT_FREQ, fill = SITE)) +
+  geom_violin(draw_quantiles = 0.5) +
+  stat_compare_means(comparisons = list(c("A","B"),c("B","C"),c("A","C"))) +
+  ggtitle("Nishida gRNA",subtitle = "All mutations") +
+  xlab("CAN1 site") +
+  ylab("Log normalized muation frequency") +
+  theme_bw()
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=SITE,y=LOG_NORM_FREQ, fill = SITE)) +
+  geom_violin(draw_quantiles = 0.5) +
+  stat_compare_means(comparisons = list(c("A","B"),c("B","C"),c("A","C"))) +
+  ggtitle("Nishida gRNA",subtitle = "C->T & A->G only") +
+  xlab("CAN1 site") +
+  ylab("Log normalized muation frequency") +
+  theme_bw()
+```
+
+gRNA7 site
+```{r}
+df_seq %>% 
+  filter(EDITOR == "gRNA7") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 108, xmax = 110, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("gRNA 7",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "gRNA7") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 108, xmax = 110, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("gRNA 7",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+Alternative site
+```{r}
+df_seq %>% 
+  filter(EDITOR == "Altern") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Alternative gRNA site",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Altern") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Alternative gRNA site",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+PmCDA1
+```{r}
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("PmCDA1",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("PmDCA1",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+```{r}
+df_seq %>% 
+  filter(EDITOR == "Altern") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point(alpha = 0.5) +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Alternatiive gRNA site",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "gRNA7") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point(alpha = 0.5) +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 108, xmax = 110, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("gRNA 7",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+Trim edges
+```{r}
+xlim_nishida = c(717,816)
+
+df_seq %>% 
+  filter(EDITOR == "WT") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 767, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("WT",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "AID") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 767, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("AID only",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 767, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Nishida",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+```{r}
+xlim_nishida = c(735,807)
+
+df_seq %>% 
+  filter(EDITOR == "WT") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("WT",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "AID") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("AID only",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 781.9, xmax = 782.1, ymin = -Inf, ymax = Inf), alpha=1, fill="grey", inherit.aes = F) +
+  geom_point() +
+  xlim(770,790) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("PmCDA1",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7)
+
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(POS>780,POS < 785)
+```
+2x
+```{r}
+df_seq %>% 
+  filter(EDITOR == "2x") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("2x",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+3x
+```{r}
+df_seq %>% 
+  filter(EDITOR == "3x") %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(TIME != "T0") %>%
-  group_by(SAMPLE) %>% 
-  summarise(CUM_MUT_ENRICH = sum(MUT_ENRICH),
-            MEDIAN_READ_DEPTH = median(READ_DEPTH),
-            EDITOR = EDITOR,
-            TIME = TIME) %>%
-  ungroup() %>% 
-  distinct() %>% 
-  filter(!is.na(CUM_MUT_ENRICH)) %>% 
-  mutate(GRNA = ifelse(grepl("gR",SAMPLE),"Guide","No-guide"))
-head(df_cum_mut)
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("3x",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
 ```
-
-
-```{r, fig.width= 10, fig.height=6}
-# Color by editor
-p_cum1 = df_cum_mut %>%
-  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = EDITOR)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c(
-    "dCasMAG" = "dodgerblue2",
-    "dCasAID" = "violetred",
-    "WT" = "black"
-  )) +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-        legend.position = "bottom") +
-  labs(size = "Transfer",color = "") +
-  xlab("") +
-  ylab("Cumulative mutation enrichment")
-
-# Color by gRNA
-p_cum2 = df_cum_mut %>%
-  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = GRNA)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c(
-    "Guide" = "cyan4",
-    "No-guide" = "darkorange1"
-  )) +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-        legend.position = "bottom") +
-  labs(size = "Transfer",color = "") +
-  xlab("Median read depth") +
-  ylab("")
-
-# Color by transfer
-p_cum3 = df_cum_mut %>%
-  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = TIME)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c(
-    "T1" = "gray55",
-    "T5" = "black"
-  )) +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-        legend.position = "bottom") +
-  labs(size = "Transfer",color = "") +
-  xlab("") +
-  ylab("")
-
-# Add marginal distributions
-p_cum1 = ggMarginal(p_cum1, type = "boxplot", size = 10,groupColour = TRUE)
-p_cum2 = ggMarginal(p_cum2, type = "boxplot", size = 10,groupColour = TRUE)
-p_cum3 = ggMarginal(p_cum3, type = "boxplot", size = 10,groupColour = TRUE)
-
-ggarrange(p_cum1, p_cum2, p_cum3,
-          ncol = 3)
-```
-
-Hmmm, seems like the presence of the gRNA didn't change much.
-Let's try shrinking our data to only look at the editing window, i.e. the gRNA binding site.
+3x & WT together
 ```{r}
-df_cum_mut = df_seq %>% 
+df_seq %>% 
+  filter(EDITOR %in% c("WT","3x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(POS >= 127) %>% 
-  filter(POS <= 147) %>% 
-  filter(TIME != "T0") %>%
-  group_by(SAMPLE) %>% 
-  summarise(CUM_MUT_ENRICH = sum(MUT_ENRICH),
-            MEDIAN_READ_DEPTH = median(READ_DEPTH),
-            EDITOR = EDITOR,
-            TIME = TIME) %>%
-  ungroup() %>% 
-  distinct() %>% 
-  filter(!is.na(CUM_MUT_ENRICH)) %>% 
-  mutate(GRNA = ifelse(grepl("gR",SAMPLE),"Guide","No-guide"))
-head(df_cum_mut)
-```
-
-```{r, fig.width= 10, fig.height=6}
-# Color by editor
-p_cum1 = df_cum_mut %>%
-  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = EDITOR)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c(
-    "dCasMAG" = "dodgerblue2",
-    "dCasAID" = "violetred",
-    "WT" = "black"
-  )) +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-        legend.position = "bottom") +
-  labs(size = "Transfer",color = "") +
-  xlab("") +
-  ylab("Cumulative mutation enrichment")
-
-# Color by gRNA
-p_cum2 = df_cum_mut %>%
-  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = GRNA)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c(
-    "Guide" = "cyan4",
-    "No-guide" = "darkorange1"
-  )) +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-        legend.position = "bottom") +
-  labs(size = "Transfer",color = "") +
-  xlab("Median read depth") +
-  ylab("")
-
-# Color by transfer
-p_cum3 = df_cum_mut %>%
-  ggplot(aes(x = MEDIAN_READ_DEPTH, y = CUM_MUT_ENRICH, color = TIME)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c(
-    "T1" = "gray55",
-    "T5" = "black"
-  )) +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-        legend.position = "bottom") +
-  labs(size = "Transfer",color = "") +
-  xlab("") +
-  ylab("")
-
-# Add marginal distributions
-p_cum1 = ggMarginal(p_cum1, type = "boxplot", size = 10,groupColour = TRUE)
-p_cum2 = ggMarginal(p_cum2, type = "boxplot", size = 10,groupColour = TRUE)
-p_cum3 = ggMarginal(p_cum3, type = "boxplot", size = 10,groupColour = TRUE)
-
-ggarrange(p_cum1, p_cum2, p_cum3,
-          ncol = 3)
-```
-
-# Filter out and analyze C -> T edits
-
-Since the base editor can only act on cytidine, we could try to filter out only these edits from our data
-```{r}
-df_seq_cyt = df_seq %>% 
-  filter(REF == "C")
-head(df_seq_cyt)
-```
-## Plot mutations accross the gene sequence
-
-Configure graphical parameters
-```{r}
-# y-axis limits
-ylim_max = 30
-# PAM
-anno_rect_PAM = annotate("rect", xmin = 138, xmax = 140, ymin = -Inf, ymax = Inf, alpha=1, fill="black")
-# gRNA binding site
-anno_rect_gRNA = annotate("rect", xmin = 127, xmax = 147, ymin = -Inf, ymax = Inf, alpha=0.3, fill="black")
-# +/-50bp editing window
-anno_rect_baseEditWindow = annotate("rect", xmin = 77, xmax = 197, ymin = -Inf, ymax = Inf, alpha=0.1, fill="black")
-
-```
-
-Plot mutation enrichment for MAG editor (gRNA binding site in Grey)
-```{r,fig.height=6,fig.width=6}
-
-df_seq_cyt %>% 
-  filter(grepl("MAG1gR",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = EDITOR)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
   geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
   theme_bw() +
-  scale_color_brewer(type = "qual",palette = "Set1") +
+  facet_wrap(vars(SITE,EDITOR),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
   theme(legend.position = "none") +
-  ylab("Mutation enrichment") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("3x",subtitle = "All mutations") +
   xlab("Position on gene") +
-  theme(aspect.ratio = 0.7) +
-  ylim(0,ylim_max)
-
-df_seq_cyt %>% 
-  filter(grepl("MAG\\d$",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
-
-df_seq_cyt %>% 
-  filter(grepl("WT",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
+  theme(aspect.ratio = 0.7) 
 ```
 
-Plot mutation enrichment for AID editor (gRNA binding site in Grey)
-```{r,fig.height=6,fig.width=6}
-
-df_seq_cyt %>% 
-  filter(grepl("AIDgR",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
+3x rep by rep
+```{r, fig.width=4,fig.height=4}
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=POS,y=LOG_TOTAL_MUT_FREQ, color = SITE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
   geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
   theme_bw() +
-  scale_color_brewer(type = "qual",palette = "Set1") +
+  facet_wrap(vars(SITE,REPLICATE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
   theme(legend.position = "none") +
-  ylab("Mutation enrichment") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("3x",subtitle = "All mutations") +
   xlab("Position on gene") +
-  theme(aspect.ratio = 0.7) +
-  ylim(0,ylim_max)
+  theme(aspect.ratio = 0.7) 
+```
 
-df_seq_cyt %>% 
-  filter(grepl("AID\\d$",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
-  theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
 
-df_seq_cyt %>% 
-  filter(grepl("WT",CONDITION)) %>% 
-  filter(MUT_TYPE == "SNP") %>%
-  ggplot(aes(x=POS,y=MUT_ENRICH, color = CONDITION)) +
-  anno_rect_baseEditWindow +
-  anno_rect_gRNA +
-  anno_rect_PAM +
-  geom_point() +
-  facet_wrap(~ TIME + CONDITION,ncol = 3) +
+# Transition/transversion plots
+
+WT
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
   theme_bw() +
-  scale_color_brewer(type = "div",palette = "Set1") +
-  theme(legend.position = "none",
-        aspect.ratio = 0.7) +
-  ylab("Mutation enrichment") +
-  xlab("Position on gene") +
-  ylim(0,ylim_max)
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+```
+
+AID
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+```
+
+2x
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("2x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.25)
+
+df_seq %>% 
+  filter(EDITOR %in% c("2x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("2x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+```
+
+3x
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.25)
+
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+```
+
+
+```{r, fig.width = 2, fig.height=3}
+p_trans_wt =
+  df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  ggtitle("WT") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+
+p_trans_gRNA =
+  df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  ggtitle("All gRNAs tabulated") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+
+p_trans_wt / p_trans_gRNA
+```
+
+```{r}
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(REPLICATE != "3") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  ggtitle("WT") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  ggtitle("All gRNAs tabulated") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+```
+
+Calculate noise threshold
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(REPLICATE != "3") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  mutate(ID = "ID") %>% 
+  ggplot(aes(y=NORM_FREQ, x=ID)) +
+  geom_boxplot(draw_quantiles = T) +
+  geom_jitter(alpha = 0.1) +
+  theme_bw() +
+  ggtitle("WT") +
+  ylim(0,0.0025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(REPLICATE != "3") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  mutate(ID = "ID") %>% 
+  ggplot(aes(y=NORM_FREQ, x=ID)) +
+  geom_violin(draw_quantiles = c(0.95)) +
+  geom_jitter(alpha = 0.1) +
+  theme_bw() +
+  ggtitle("WT") +
+  ylim(0,0.0025)
+```
+
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(REPLICATE != "3") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  mutate(ID = "ID") %>% 
+  summarise(quantile = scales::percent(c(0.25, 0.95)),
+            norm_freq_quant = quantile(NORM_FREQ, c(0.25, 0.95)))
+```
+
+```{r}
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(REPLICATE != "3") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 2.206485e-04) +
+  theme_bw() +
+  ggtitle("WT") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
+
+df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(LOG_TOTAL_MUT_FREQ)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 2.206485e-04) +
+  ggtitle("All gRNAs tabulated") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025)
 ```
