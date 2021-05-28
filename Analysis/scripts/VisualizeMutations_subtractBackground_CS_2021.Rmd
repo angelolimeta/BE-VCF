@@ -1,0 +1,1156 @@
+---
+title: "Visualise base editing data"
+author: "Angelo Limeta"
+date: "2021-05-28"
+output:
+  html_document:
+    df_print: kable
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(cowplot)
+library(ggpubr)
+library(ggsci)
+library(hrbrthemes)
+library(ggrepel)
+library(ggExtra)
+library(patchwork)
+select = dplyr::select
+mutate = dplyr::mutate
+```
+
+# Load Data
+
+Load pre-processed vcf data and metadata
+```{r}
+df_seq <- readRDS(file = "../data/processed_data/christos_2021_Q30fastp.rds")
+head(df_seq)
+```
+
+## Plot non-normalized data
+
+Let's begin by plotting read depth across the sequence per sample
+```{r}
+df_seq %>%
+  group_by(SAMPLE) %>% 
+  summarise(median_read_depth = median(READ_DEPTH)) %>% 
+  ungroup() %>% 
+  head()
+
+df_seq %>% 
+  ggplot(aes(x=POS,y=READ_DEPTH,group=SAMPLE, color=EDITOR)) +
+  geom_point() +
+  theme_bw() +
+  ylab("Read depth") +
+  xlab("CAN1 position") +
+  theme(legend.position = "bottom")
+
+#plot 2x only
+df_seq %>% 
+  filter(EDITOR == "2x") %>%
+  ggplot(aes(x=POS,y=READ_DEPTH,group=SAMPLE, color=REPLICATE)) +
+  geom_point() +
+  theme_bw() +
+  ylab("Read depth") +
+  xlab("CAN1 position") +
+  theme(legend.position = "bottom")
+```
+
+Let's look at the amount of mutations per sample, and compare this to read depth
+```{r}
+df_seq %>%
+  group_by(SAMPLE) %>% 
+  summarise(median_read_depth = mean(READ_DEPTH),
+            median_mutation_freq = mean(FREQ)) %>% 
+  ungroup()
+```
+
+# Data pre-processing
+
+## Adjust for read depth and end regions
+
+Remove low coverage regions
+```{r}
+df_seq = df_seq %>% 
+  filter(READ_DEPTH > 5000)
+  
+df_seq %>% head()
+```
+
+Trim edges of each region
+```{r}
+df_seq =
+  df_seq %>% 
+  filter((POS > 52 & POS < 155) | (POS > 730 & POS < 840) | (POS > 1580 & POS < 1681))
+```
+
+Normalize by sequencing depth
+```{r}
+df_seq = df_seq %>% 
+  group_by(SAMPLE,POS) %>% 
+  mutate(NORM_FREQ = (FREQ+1)/(READ_DEPTH),
+         LOG_NORM_FREQ = log2((FREQ+1)/READ_DEPTH)) %>% 
+  ungroup()
+
+df_seq %>% head()
+```
+
+## Calculate relative mutation frequencies
+
+Let's calculate the frequency of all alternative alleles at each position
+```{r}
+df_seq = df_seq %>%
+  group_by(SAMPLE, POS) %>%
+  mutate(TOTAL_MUT_FREQ = ifelse(MUT_TYPE == "SNP",
+                           sum(NORM_FREQ[MUT_TYPE == "SNP"]),
+                           NA)) %>%
+  ungroup() %>% 
+  mutate(LOG_TOTAL_MUT_FREQ = log(TOTAL_MUT_FREQ))
+```
+
+
+## Calculate background subtracted mutation frequencies
+
+First, we calculate the average mutation frequency at each base for the WT samples
+```{r}
+df_mut_freq_wt =
+  df_seq %>% 
+  filter(MUT_TYPE == "SNP",
+         EDITOR == "WT") %>% 
+  group_by(POS) %>% 
+  summarise(MEAN_TOTAL_MUT_FREQ_WT = mean(TOTAL_MUT_FREQ)) %>% 
+  ungroup()
+
+# Join with original data frame
+
+df_seq =
+  df_seq %>% 
+  full_join(df_mut_freq_wt,by = "POS")
+```
+
+let's repeat but for each individual transition
+```{r}
+df_mut_freq_wt_trans =
+  df_seq %>% 
+  filter(MUT_TYPE == "SNP",
+         EDITOR == "WT") %>% 
+  group_by(POS,EDIT_TYPE) %>% 
+  summarise(MEAN_NORM_FREQ_WT = mean(NORM_FREQ)) %>% 
+  ungroup()
+
+df_seq =
+  df_seq %>% 
+  full_join(df_mut_freq_wt_trans,by = c("POS","EDIT_TYPE"))
+```
+
+
+Let's now subtract the T0 alternative alleles frequency. Let's define this as the mutation enrichment of a given base.
+```{r}
+df_seq =
+  df_seq %>%
+  filter(MUT_TYPE == "SNP") %>%
+  mutate(TOTAL_MUT_ENRICH = TOTAL_MUT_FREQ-MEAN_TOTAL_MUT_FREQ_WT) %>%
+  mutate(TOTAL_MUT_ENRICH = ifelse(TOTAL_MUT_ENRICH < 0,
+                               0,
+                               TOTAL_MUT_ENRICH))
+```
+
+Also subtract T0 from the individual transistions
+```{r}
+df_seq =
+  df_seq %>%
+  filter(MUT_TYPE == "SNP") %>%
+  mutate(MUT_ENRICH = NORM_FREQ-MEAN_NORM_FREQ_WT) %>%
+  mutate(MUT_ENRICH = ifelse(MUT_ENRICH < 0,
+                               0,
+                               MUT_ENRICH))
+```
+
+
+# Analysis of all mutations
+
+WT
+```{r}
+df_seq %>% 
+  filter(EDITOR == "WT") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("Wild-type",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "AID") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("AID only",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+Nishida site
+```{r}
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 767, xmax = 769, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("Nishida gRNA",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 767, xmax = 769, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 748, xmax = 788, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Nishida gRNA",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","C_to_A","G_to_T","G_to_A")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 767, xmax = 769, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 748, xmax = 788, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Log normalized muation frequency") +
+  ggtitle("Nishida gRNA",subtitle = "G transitions") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+Compare overall mutation frequency across sites
+```{r}
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=SITE,y=TOTAL_MUT_ENRICH, fill = SITE)) +
+  geom_violin(draw_quantiles = 0.5) +
+  stat_compare_means(comparisons = list(c("A","B"),c("B","C"),c("A","C"))) +
+  ggtitle("Nishida gRNA",subtitle = "All mutations") +
+  xlab("CAN1 site") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  theme_bw()
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=SITE,y=LOG_NORM_FREQ, fill = SITE)) +
+  geom_violin(draw_quantiles = 0.5) +
+  stat_compare_means(comparisons = list(c("A","B"),c("B","C"),c("A","C"))) +
+  ggtitle("Nishida gRNA",subtitle = "C->T & A->G only") +
+  xlab("CAN1 site") +
+  ylab("Log normalized mutation frequency") +
+  theme_bw()
+```
+
+gRNA7 site
+```{r}
+df_seq %>% 
+  filter(EDITOR == "gRNA7") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 108, xmax = 110, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 89, xmax = 129, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("gRNA 7",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "gRNA7") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REF)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 108, xmax = 110, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 89, xmax = 129, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("gRNA 7",subtitle = "All mutations, colored by edited base") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "gRNA7") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 108, xmax = 110, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 89, xmax = 129, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Log normalized mutation frequency") +
+  ggtitle("gRNA 7",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+Alternative site
+```{r}
+df_seq %>% 
+  filter(EDITOR == "Altern") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 787, xmax = 827, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("Alternative gRNA site",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Altern") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REF)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 787, xmax = 827, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("Alternative gRNA site",subtitle = "All mutations, colored by edited base") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Altern") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 787, xmax = 827, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Log normalized mutation frequency") +
+  ggtitle("Alternative gRNA site",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+PmCDA1
+```{r}
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806.8, xmax = 807.2, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 787, xmax = 827, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("PmCDA1",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REF)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806.8, xmax = 807.2, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 787, xmax = 827, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("PmCDA1",subtitle = "All mutations, colored by edited base") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(EDIT_TYPE %in% c("C_to_T","A_to_G")) %>% 
+  ggplot(aes(x=POS,y=LOG_NORM_FREQ, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806.8, xmax = 807.2, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 787, xmax = 827, ymin = -Inf, ymax = Inf), alpha=0.1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Log normalized mutation frequency") +
+  ggtitle("PmDCA1",subtitle = "C->T & A->G only") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+```{r}
+df_seq %>% 
+  filter(EDITOR == "Altern") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REPLICATE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point(alpha = 0.5) +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 806, xmax = 808, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("Alternatiive gRNA site",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7,
+        legend.position = "bottom") 
+
+df_seq %>% 
+  filter(EDITOR == "gRNA7") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point(alpha = 0.5) +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "A"), aes(xmin = 108, xmax = 110, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("gRNA 7",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+Trim edges
+```{r}
+xlim_nishida = c(717,816)
+
+df_seq %>% 
+  filter(EDITOR == "WT") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 767, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("WT",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "AID") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 767, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("AID only",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "Nish") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 767, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("Nishida",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+Check PmCDA1 efficiency
+```{r}
+xlim_nishida = c(735,807)
+
+df_seq %>% 
+  filter(EDITOR == "WT") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("WT",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "AID") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  xlim(xlim_nishida[1],xlim_nishida[2]) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("AID only",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  theme_bw() +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  geom_rect(data = data.frame(SITE = "B"), aes(xmin = 781.9, xmax = 782.1, ymin = -Inf, ymax = Inf), alpha=1, fill="grey", inherit.aes = F) +
+  geom_point() +
+  xlim(770,790) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ylim(c(0,0.015)) +
+  ggtitle("PmCDA1",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7)
+
+df_seq %>% 
+  filter(EDITOR == "PmCDA1") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(POS>780,POS < 785)
+```
+2x
+```{r}
+df_seq %>% 
+  filter(EDITOR == "2x") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(!is.na(TOTAL_MUT_ENRICH)) %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("2x",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  ylim(c(0,0.015)) +
+  theme(aspect.ratio = 0.7,
+        legend.position = "none") 
+
+df_seq %>% 
+  filter(EDITOR == "2x") %>% 
+  filter(MUT_TYPE == "SNP") %>%
+  filter(!is.na(TOTAL_MUT_ENRICH)) %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REF)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("2x",subtitle = "All mutations, colored by edited base") +
+  xlab("Position on gene") +
+  ylim(c(0,0.015)) +
+  theme(aspect.ratio = 0.7) 
+```
+
+3x
+```{r}
+df_seq %>% 
+  filter(EDITOR == "3x") %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(!is.na(TOTAL_MUT_ENRICH)) %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("3x",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  ylim(c(0,0.015)) +
+  theme(aspect.ratio = 0.7) 
+
+# Colored by edited base
+df_seq %>% 
+  filter(EDITOR == "3x") %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(!is.na(TOTAL_MUT_ENRICH)) %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = REF)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "bottom") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("3x",subtitle = "All mutations, colored by edited base") +
+  xlab("Position on gene") +
+  ylim(c(0,0.015)) +
+  theme(aspect.ratio = 0.7) 
+```
+3x & WT together
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(!is.na(TOTAL_MUT_ENRICH)) %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = EDITOR)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE,EDITOR),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("3x",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+3x, faceted by replicate
+```{r, fig.width=4,fig.height=4}
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(!is.na(TOTAL_MUT_ENRICH)) %>%
+  ggplot(aes(x=POS,y=TOTAL_MUT_ENRICH, color = SITE)) +
+  #anno_rect_baseEditWindow +
+  #anno_rect_gRNA +
+  #anno_rect_PAM +
+  geom_point() +
+  theme_bw() +
+  facet_wrap(vars(SITE,REPLICATE),ncol = 3,scales = "free_x") +
+  scale_color_viridis_d(option = "D") +
+  #geom_rect(data = data.frame(SITE = "B"), aes(xmin = 764, xmax = 766, ymin = -Inf, ymax = Inf), alpha=1, fill="black", inherit.aes = F) +
+  theme(legend.position = "none") +
+  ylab("Proportion of mutated bases (background normalized)") +
+  ggtitle("3x",subtitle = "All mutations") +
+  xlab("Position on gene") +
+  theme(aspect.ratio = 0.7) 
+```
+
+
+# Transition/transversion plots
+
+WT
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
+
+AID
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
+
+2x
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("2x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.25) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("2x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("2x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
+
+3x
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.25) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
+
+
+```{r, fig.width = 2, fig.height=3}
+p_trans_wt =
+  df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  ggtitle("WT") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+p_trans_gRNA =
+  df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  ggtitle("All gRNAs tabulated") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+p_trans_wt / p_trans_gRNA
+```
+
+```{r}
+
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  theme_bw() +
+  ggtitle("WT") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  ggtitle("All gRNAs tabulated") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
+
+Calculate noise threshold
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  mutate(ID = "ID") %>% 
+  ggplot(aes(y=MUT_ENRICH, x=ID)) +
+  geom_boxplot(draw_quantiles = T) +
+  geom_jitter(alpha = 0.1) +
+  theme_bw() +
+  ggtitle("WT") +
+  ylim(0,0.00025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
+
+Define 99% quantile for the WT data
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(REPLICATE != "3") %>% 
+  filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  mutate(ID = "ID") %>% 
+  summarise(quantile = scales::percent(c(0.25, 0.999)),
+            MUT_ENRICH_quant = quantile(MUT_ENRICH, c(0.25, 0.999)))
+```
+
+Compare editing profiles of WT, AID only, single gRNAs only, multiplexed gRNAs only and PmCDA1 only.
+Note that single gRNA profiles include off target activity as well!
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  #filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  theme_bw() +
+  ggtitle("WT") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  #filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("All gRNAs tabulated") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  #filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("single gRNAs only") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  #filter(SITE == "A") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("multiplexed gRNAs only") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("PmCDA1")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("PmCDA1 only") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
+
