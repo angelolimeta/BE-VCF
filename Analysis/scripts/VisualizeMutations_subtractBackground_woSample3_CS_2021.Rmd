@@ -801,7 +801,7 @@ WT
 df_seq %>% 
   filter(EDITOR %in% c("WT")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
+  #filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -815,7 +815,7 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("WT")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
+  #filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -829,7 +829,7 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("WT")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
+  #filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -846,7 +846,6 @@ AID
 df_seq %>% 
   filter(EDITOR %in% c("AID")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -860,7 +859,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("AID")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -874,7 +872,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("AID")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -891,7 +888,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("2x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -905,7 +901,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("2x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -919,7 +914,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("2x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -936,7 +930,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("3x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -950,7 +943,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("3x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -964,7 +956,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("3x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -977,28 +968,27 @@ df_seq %>%
 ```
 
 
-```{r, fig.width = 2, fig.height=3}
+```{r}
 p_trans_wt =
   df_seq %>% 
   filter(EDITOR %in% c("WT")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
-  filter(!is.na(MUT_ENRICH)) %>%
+  filter(!is.na(MUT_ENRICH)) %>% 
   ggplot(aes(x=ALLELE,y=MUT_ENRICH,group = ALLELE,color = ALLELE)) +
   geom_jitter() +
   theme_bw() +
   ggtitle("WT") +
   facet_wrap(vars(REF),ncol = 4) +
   ylim(0,0.0025) +
-  ylab("Proportion of mutated bases (background normalized)")
+  ylab("Proportion of mutated bases (background normalized)") +
+  theme(legend.position = "none")
 
 p_trans_gRNA =
   df_seq %>% 
   filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -1008,7 +998,8 @@ p_trans_gRNA =
   theme_bw() +
   facet_wrap(vars(REF),ncol = 4) +
   ylim(0,0.0025) +
-  ylab("Proportion of mutated bases (background normalized)")
+  ylab("Proportion of mutated bases (background normalized)") +
+  theme(legend.position = "none")
 
 p_trans_wt / p_trans_gRNA
 ```
@@ -1051,7 +1042,6 @@ Calculate noise threshold
 df_seq %>% 
   filter(EDITOR %in% c("WT")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -1071,13 +1061,12 @@ df_seq %>%
   filter(EDITOR %in% c("WT")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
   filter(REPLICATE != "3") %>% 
-  filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
   mutate(ID = "ID") %>% 
-  summarise(quantile = scales::percent(c(0.25, 0.999)),
-            MUT_ENRICH_quant = quantile(MUT_ENRICH, c(0.25, 0.999)))
+  summarise(quantile = scales::percent(c(0.25, 0.99)),
+            MUT_ENRICH_quant = quantile(MUT_ENRICH, c(0.25, 0.99)))
 ```
 
 Compare editing profiles of WT, AID only, single gRNAs only, multiplexed gRNAs only and PmCDA1 only.
@@ -1086,7 +1075,6 @@ Note that single gRNA profiles include off target activity as well!
 df_seq %>% 
   filter(EDITOR %in% c("WT")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  #filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -1100,9 +1088,23 @@ df_seq %>%
   ylab("Proportion of mutated bases (background normalized)")
 
 df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  theme_bw() +
+  ggtitle("AID") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
   filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  #filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -1118,7 +1120,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("Nish","gRNA7","Altern")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  #filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -1134,7 +1135,6 @@ df_seq %>%
 df_seq %>% 
   filter(EDITOR %in% c("2x","3x")) %>% 
   filter(MUT_TYPE == "SNP") %>% 
-  #filter(SITE == "A") %>%
   mutate(REF = factor(REF, levels = c("A","C","G","T")),
          ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
   filter(!is.na(MUT_ENRICH)) %>%
@@ -1163,3 +1163,101 @@ df_seq %>%
   ylab("Proportion of mutated bases (background normalized)")
 ```
 
+Exclude fragment C from plots
+```{r}
+df_seq %>% 
+  filter(EDITOR %in% c("WT")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE != "C") %>% 
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  theme_bw() +
+  ggtitle("WT") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("AID")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE != "C") %>% 
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  theme_bw() +
+  ggtitle("AID") +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern","2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE != "C") %>% 
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("All gRNAs tabulated") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("Nish","gRNA7","Altern")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE != "C") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("single gRNAs only") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("2x","3x")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE != "C") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("multiplexed gRNAs only") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+
+df_seq %>% 
+  filter(EDITOR %in% c("PmCDA1")) %>% 
+  filter(MUT_TYPE == "SNP") %>% 
+  filter(SITE != "C") %>%
+  mutate(REF = factor(REF, levels = c("A","C","G","T")),
+         ALLELE = factor(ALLELE, levels = c("A","C","G","T","D"))) %>% 
+  filter(!is.na(MUT_ENRICH)) %>%
+  ggplot(aes(x=ALLELE,y=NORM_FREQ,group = ALLELE,color = ALLELE)) +
+  geom_jitter() +
+  geom_hline(yintercept = 5.5723e-05) +
+  ggtitle("PmCDA1 only") +
+  theme_bw() +
+  facet_wrap(vars(REF),ncol = 4) +
+  ylim(0,0.0025) +
+  ylab("Proportion of mutated bases (background normalized)")
+```
